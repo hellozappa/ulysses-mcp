@@ -25,6 +25,7 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { getAuditLogger } from "./audit-logger.js";
 import { getSecureTempManager } from "./secure-temp.js";
+import { extendedTools, createExtensionHandler } from "./extended-tools.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,6 +84,10 @@ const ALLOWED_ACTIONS = new Set([
   "update-note",
   "remove-note"
 ]);
+// Ulysses supports x-success/x-error on all actions. Await actual completion rather
+// than reporting a successfully launched URL as a completed mutation.
+ALLOWED_ACTIONS.add("get-quick-look-url");
+for (const action of ALLOWED_ACTIONS) CALLBACK_ACTIONS.add(action);
 
 // Rate limiting state (simple in-memory rate limiter)
 const rateLimitState = new Map<string, { count: number; resetTime: number }>();
@@ -345,14 +350,18 @@ async function executeUlyssesCommand(
   const needsCallback = CALLBACK_ACTIONS.has(action);
   let url: string;
   let callbackPromise: Promise<any> | null = null;
+  let callbackId: string | undefined;
+  let launched = false;
   
   if (needsCallback) {
     // Ensure helper app is running
     await ensureHelperAppRunning();
     
     // Create callback and wait for response via file-based IPC
-    const callbackId = `${action}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    callbackId = `${action}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     callbackPromise = waitForCallback(callbackId);
+    // A launch failure can precede awaiting this promise; keep its rejection handled.
+    void callbackPromise.catch(() => undefined);
     
     const successUrl = encodeParam(`ulysses-mcp-callback://x-success?callbackId=${callbackId}`);
     const errorUrl = encodeParam(`ulysses-mcp-callback://x-error?callbackId=${callbackId}`);
@@ -373,7 +382,11 @@ async function executeUlyssesCommand(
   
   try {
     // Use execFile instead of exec to prevent shell injection
-    await execFileAsync('open', [url]);
+    const appPath = process.env.ULYSSES_APP_PATH;
+    const launchArgs = appPath ? ['-a', appPath, url] : [url];
+    if (params["silent-mode"] === "YES") launchArgs.unshift('-g');
+    await execFileAsync('open', launchArgs);
+    launched = true;
     
     if (callbackPromise) {
       // Wait for callback and format the response
@@ -383,13 +396,23 @@ async function executeUlyssesCommand(
       return `Successfully executed ${action}`;
     }
   } catch (error) {
+    if (callbackId) {
+      const pending = pendingCallbacks.get(callbackId);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        clearInterval(pending.pollInterval);
+        pendingCallbacks.delete(callbackId);
+        pending.reject(new Error("Ulysses URL launch failed"));
+      }
+    }
     if (error instanceof McpError) {
       throw error;
     }
+    // execFile errors include the full URL (token/content). Do not expose them.
     // Sanitize error messages to avoid exposing sensitive information
     throw new McpError(
       ErrorCode.InternalError,
-      `MCP error -32603: ${error instanceof Error ? error.message : String(error)}`
+      launched ? `Ulysses callback failed: ${error instanceof Error ? error.message : String(error)}` : "Failed to open Ulysses API URL; verify ULYSSES_APP_PATH and the system URL handler"
     );
   }
 }
@@ -397,6 +420,10 @@ async function executeUlyssesCommand(
 /**
  * Create an MCP server with tools for Ulysses automation
  */
+const extensionHandler = createExtensionHandler(executeUlyssesCommand);
+const extensionNames = new Set(extendedTools.map(tool => tool.name));
+// Serialize tool calls so callback sequences and mutations share consistent app state.
+let toolQueue: Promise<unknown> = Promise.resolve();
 const server = new Server(
   {
     name: "ulysses-mcp",
@@ -415,6 +442,7 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
+      ...extendedTools,
       {
         name: "ulysses_new_sheet",
         description: "Create a new sheet in Ulysses with the specified text content. Optionally specify a group, format (markdown/text/html), position, and whether it should be a material sheet.",
@@ -887,10 +915,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 /**
  * Handler for executing Ulysses tool calls
  */
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+async function handleTool(request: { params: { name: string; arguments?: Record<string, unknown> } }) {
   const { name, arguments: args } = request.params;
 
   try {
+    if (extensionNames.has(name)) {
+      const result = await extensionHandler(name, args ?? {});
+      return { content: [{ type: "text" as const, text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }] };
+    }
     switch (name) {
       case "ulysses_new_sheet": {
         const text = validateLength(validateRequired(args?.text, "text"), 1000000, "text");
@@ -1232,6 +1264,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       `Tool execution failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+server.setRequestHandler(CallToolRequestSchema, request => {
+  const pending = toolQueue.then(() => handleTool(request));
+  toolQueue = pending.catch(() => undefined);
+  return pending;
 });
 
 /**

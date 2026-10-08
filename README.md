@@ -109,7 +109,7 @@ Refer to your client's documentation for adding MCP servers via stdio transport.
 
 ## Available Tools
 
-The server provides 23 tools organized into the following categories:
+The server advertises 34 tools: the original 23 URL API tools, ten API-backed extensions, and an unavailable current-sheet compatibility tool. Shortcuts-based detection is disabled. Tool availability does not establish live compatibility with a particular Ulysses release.
 
 ### Content Creation
 
@@ -148,6 +148,41 @@ The server provides 23 tools organized into the following categories:
 - `ulysses_remove_keywords` - Remove keywords
 - `ulysses_update_note` - Update existing notes
 - `ulysses_remove_note` - Remove notes
+
+### API-backed Extensions
+
+- `ulysses_get_current_sheet` — Returns `status: unavailable` without launching any app, reading bodies, or using clipboard/Accessibility. No supported direct API route has been verified. Shortcuts invocation is disabled; this tool remains only for compatibility with existing clients.
+
+- `ulysses_get_capabilities` — Explain available routes and their limits without opening Ulysses.
+- `ulysses_list_projects` / `ulysses_get_project` — Enumerate actual API `project` objects and inspect their `projectMain` / `projectExtras` sections. Regular groups are not Projects.
+- `ulysses_project_api` — Open a verified Project or attempt to rename its root via `set-group-title`, with explicit human approval and readback. Project-root rename support has not been validated live.
+- `ulysses_copy_sheet_template` — Copy a sheet into an explicitly identified container inside a Project’s Extras. The API has no semantic Templates identifier: supply `template_group_id` after identifying the actual Templates container; a matching title alone is insufficient.
+- `ulysses_restore_item` — Attempt API `move` from an enumerated Trash section to an explicit live destination ID, with human approval and destination readback. This does not implement native Put Back or whole-Project restoration, and requires live validation.
+- `ulysses_search` — Search API metadata or sequential API reads by title, keywords, or text. Optional `scope_id`; `scan_limit` defaults to 50 (maximum 500). `nextOffset` and `truncated` disclose unsearched sheets. API enumeration offsets can shift as the library changes; filter contents are not enumerated by the API. Library-wide enumeration may include Trash when returned by Ulysses.
+- `ulysses_export` — Export sheet/group/Project bodies to `markdown`, `html`, or `rtf`, at an absolute `output_path`. Existing files are never overwritten. Group/Project exports exclude material; Project exports exclude Extras. Explicit sheet or Extras selection allows intentional export of that content. `sheet_limit` defaults to 100 (maximum 500); larger exports fail instead of silently truncating. Filter export is unsupported.
+- `ulysses_sheet_statistics` — Count words/characters in API Markdown, including markup; these differ from native statistics.
+- `ulysses_get_quick_look_url` — Retrieve the documented macOS sheet filesystem URL. Do not write to Ulysses library internals.
+
+Markdown preserves the text returned by `read-sheet`; multiple bodies are joined with two newlines in API enumeration order. HTML uses Markdown rendering with tables and footnotes; RTF uses macOS `textutil`. These are body exports: they omit attached notes/keywords and do not reconstruct embedded attachments or native Ulysses styles. Unsupported Markdown XL constructs may remain literal. Native export fidelity requires a later non-URL-API route.
+
+All API commands now wait for `x-success` / `x-error`, including mutations. A launched URL is not treated as success. Tool calls execute sequentially; after a timeout or uncertain mutation, inspect the library before repeating it.
+
+### Beta and Public Release Targeting
+
+By default, `ulysses://` uses the system’s registered Ulysses handler. If multiple releases are installed, set `ULYSSES_APP_PATH` to the intended application bundle’s exact path in the MCP environment. No Beta-specific path or bundle name is embedded in the server. Inspect `ulysses_get_version` once per target: Project types and material metadata require API version 3. Source/build tests are separate from live Beta and public-release verification.
+
+Shortcuts must not be launched by this server. Current-sheet detection is unavailable, and `ULYSSES_CURRENT_SHEET_SHORTCUT` no longer enables it. Historical workflow prototypes are preserved locally but excluded from Git, packaging, and staging. `ULYSSES_APP_PATH` continues to select the target for documented Ulysses URL API calls.
+
+Read-only current-sheet/editor inspection is possible through macOS Accessibility in a capable agent client. It was verified through Codex on Beta, but it is not implemented inside this MCP server. Verify exact API identity independently before mutations. The portable [Ulysses agent skill](skills/ulysses/SKILL.md) documents this boundary and API-first operation.
+
+### Build and Stage Without Replacing the Configured Runtime
+
+```bash
+npm run build-all
+npm run stage-runtime
+```
+
+`build-all` compiles TypeScript and the callback helper without registering its URL scheme or launching applications. `stage-runtime` creates a fresh `work/staged/runtime-*` directory containing compiled modules, the callback app, production dependencies, and a SHA-256 manifest. It does not alter the configured runtime or MCP settings. The manifest destination defaults to `$CODEX_HOME/servers/ulysses-mcp` (or `~/.codex/servers/ulysses-mcp`); `ULYSSES_RUNTIME_PATH` overrides it. Review the staged manifest and back up the installed runtime before an explicitly approved replacement. Copy the complete runtime, not only `build/index.js`; reconnect the MCP client afterward and ensure the changed callback helper is actually running.
 
 ## Usage Examples
 
@@ -299,11 +334,14 @@ If you discover a security vulnerability, please email <sonofagl1tch@pebcakconsu
 
 The MCP server is limited by the capabilities of the Ulysses x-callback-url API. Some features available in the Ulysses GUI are not currently available via the API:
 
-**Not Currently Supported:**
+**Outside the URL API scope:**
 
-- ❌ **Search functionality** - Cannot search across sheets by content or metadata
-- ❌ **Statistics** - Cannot retrieve word counts, character counts, or reading time
-- ❌ **Export operations** - Cannot export sheets to PDF, DOCX, or other formats
+- **Current sheet and full-body replacement** — No documented URL actions. Shortcuts-based detection is disabled. A direct current-sheet API route has not been verified; current-sheet detection and in-place body replacement remain outside this implementation.
+- **Native Project lifecycle/settings** — Creation, conversion, whole-Project duplication, archive/restore, permanent erase, icons/colors, goals/deadlines require another route.
+
+- **Native search** — No native search URL action; `ulysses_search` searches API data locally.
+- **Native statistics** — `ulysses_sheet_statistics` calculates counts from API Markdown; native counts/reading time are unavailable.
+- **Native export** — Markdown/HTML/RTF body exports are implemented locally; native styles, attachments, PDF/DOCX exports are unavailable.
 - ❌ **Publishing** - Cannot publish directly to WordPress, Medium, or other platforms
 - ❌ **Goals and targets** - Cannot set or retrieve writing goals
 - ❌ **Sheet history** - Cannot access revision history or version control

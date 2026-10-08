@@ -10,6 +10,8 @@
     "build"
   ],
   "scripts": {
+    "build-all": "npm run build && bash scripts/build-callback.sh",
+    "stage-runtime": "node scripts/stage-runtime.mjs",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "build-helper": "bash scripts/build-helper.sh",
     "sign-helper": "bash scripts/sign-helper.sh",
@@ -37,11 +39,15 @@
   "author": "Ryan Nolette",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.2"
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "markdown-it": "^15.0.2",
+    "markdown-it-footnote": "^4.0.0"
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",
     "@types/jest": "^30.0.0",
+    "@types/markdown-it": "^14.2.0",
+    "@types/markdown-it-footnote": "^3.0.4",
     "@types/node": "^20.11.24",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.5",

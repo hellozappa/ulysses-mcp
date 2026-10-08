@@ -2,6 +2,8 @@
 export default {
   preset: "ts-jest/presets/default-esm",
   testEnvironment: "node",
+  testPathIgnorePatterns: ["/node_modules/", "/work/"],
+  modulePathIgnorePatterns: ["<rootDir>/work/"],
   extensionsToTreatAsEsm: [".ts"],
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",

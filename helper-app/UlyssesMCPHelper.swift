@@ -33,7 +33,7 @@ class UlyssesMCPHelper: NSObject, NSApplicationDelegate {
             return
         }
         
-        print("Received callback URL: \(urlString)")
+        // Callback URLs contain authorization tokens and sheet content. Never log them.
         
         // Parse the URL components
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -48,16 +48,16 @@ class UlyssesMCPHelper: NSObject, NSApplicationDelegate {
         }
         
         // Get the callback ID
-        guard let callbackId = callbackData["callbackId"] else {
+        guard let callbackId = callbackData["callbackId"],
+              callbackId.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil else {
             print("ERROR: No callbackId in callback URL")
             return
         }
         
         print("Callback ID: \(callbackId)")
-        print("Callback data: \(callbackData)")
         
         // Determine if this is success or error callback
-        let isError = url.path.contains("/x-error")
+        let isError = url.host == "x-error" || url.path.contains("/x-error")
         
         // Send data to MCP server via Unix socket
         sendToMCPServer(callbackId: callbackId, data: callbackData, isError: isError)
@@ -65,15 +65,14 @@ class UlyssesMCPHelper: NSObject, NSApplicationDelegate {
     
     func sendToMCPServer(callbackId: String, data: [String: String], isError: Bool) {
         // Create a response payload
-        var response: [String: Any] = [
+        let response: [String: Any] = [
             "callbackId": callbackId,
             "isError": isError,
             "data": data
         ]
         
         // Convert to JSON
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: response, options: []),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: response, options: []) else {
             print("ERROR: Could not serialize callback data to JSON")
             return
         }
@@ -87,7 +86,8 @@ class UlyssesMCPHelper: NSObject, NSApplicationDelegate {
         
         let socketDataPath = "\(secureTempDir)/callback-\(callbackId).json"
         do {
-            try jsonString.write(toFile: socketDataPath, atomically: true, encoding: .utf8)
+            try jsonData.write(to: URL(fileURLWithPath: socketDataPath), options: [.atomic])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: socketDataPath)
             print("Wrote callback data to: \(socketDataPath)")
         } catch {
             print("ERROR: Could not write callback data: \(error)")

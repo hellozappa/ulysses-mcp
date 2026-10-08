@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -129,3 +128,9 @@ helper-app/**/*.dia
 helper-app/**/DerivedData/
 helper-app/**/*.xcarchive
 .continue/mcpServers/new-mcp-server.yaml
+
+# Local review backups and validation artifacts
+work/
+
+# Retired local Shortcut prototypes; never package or invoke
+shortcuts/
